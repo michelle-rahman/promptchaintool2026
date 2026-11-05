@@ -1,11 +1,11 @@
 # Promptloom
 
-A small, Vercel-ready prompt-chain studio backed by Supabase. It supports superadmin-only email-link sign-in, prompt-chain and step CRUD, step reordering, sequential text generation with optional image input, saved outputs, search, and light/dark/system themes.
+A small, Vercel-ready prompt-chain studio backed by Supabase. It supports Google OAuth with a `profiles.is_superadmin` gate, prompt-chain and step CRUD, step reordering, sequential text generation with optional image input, saved outputs, search, and light/dark/system themes.
 
 ## Supabase setup
 
 1. In the Supabase SQL editor, run [`supabase/migrations/20261105000000_promptloom.sql`](supabase/migrations/20261105000000_promptloom.sql). It expects the existing `public.profiles` table to contain `id` (the matching `auth.users.id`) and `is_superadmin boolean`. The migration adds a self-profile read policy plus superadmin-only policies for the tool tables.
-2. In **Authentication → URL Configuration**, add the app’s local and deployed URLs to the allowed redirect URLs. Enable email sign-in.
+2. In **Authentication → Providers → Google**, enable Google using the same OAuth client setup as your other apps. In **Authentication → URL Configuration**, add `http://localhost:8000/` and `https://promptchaintool2026.vercel.app/` to the allowed redirect URLs. The OAuth callback URI for Google Cloud is `https://exzfdcrmdgcyaozmtmvg.supabase.co/auth/v1/callback`.
 3. Set the model secret for the edge function, then deploy it:
 
    ```sh

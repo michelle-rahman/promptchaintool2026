@@ -1,0 +1,8 @@
+.google-button{height:43px;background:#fff;border-color:#dedfd9;color:#3d403a;font-size:12px;position:relative}
+.google-button:hover{background:#fbfbf8;border-color:#c9cec0}
+.google-button .google-g{font:700 17px Arial,sans-serif;color:#4285f4;margin-right:2px}
+.google-button .google-arrow{margin-left:auto;color:#868a80}
+.login-card .google-button{margin-top:3px}
+.login-card .tiny{line-height:1.5}
+.theme-dark .google-button{background:#282d27;color:#edf0e8;border-color:#41483c}
+.theme-dark .google-button:hover{background:#30372c}
