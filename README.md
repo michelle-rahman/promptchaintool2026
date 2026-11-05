@@ -1,6 +1,6 @@
 # Promptloom
 
-A small, Vercel-ready prompt-chain studio backed by Supabase. It supports Google OAuth with a `profiles.is_superadmin` gate, prompt-chain and step CRUD, step reordering, sequential text generation with optional image input, saved outputs, search, and light/dark/system themes.
+A small, Vercel-ready prompt-chain studio backed by Supabase. It supports Google OAuth with PKCE and a `profiles.is_superadmin` gate, prompt-chain and step CRUD, step reordering, sequential text generation with optional image input, saved outputs, search, and light/dark/system themes.
 
 ## Supabase setup
 

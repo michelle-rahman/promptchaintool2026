@@ -1,6 +1,8 @@
 const SUPABASE_URL = 'https://exzfdcrmdgcyaozmtmvg.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_-4QAid15Hwg5bBdWUMd-_w_-wBUxFRx';
-const sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+  auth: { flowType: 'pkce', detectSessionInUrl: true },
+});
 const $ = (s) => document.querySelector(s);
 const state = { user: null, chains: [], steps: [], selected: null, editStepId: null, filter: 'all', image: null, theme: localStorage.getItem('promptloom-theme') || 'system' };
 const artClasses = ['green','lav','peach','blue','pink','gold'];
