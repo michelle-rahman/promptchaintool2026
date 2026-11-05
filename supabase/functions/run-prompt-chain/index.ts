@@ -10,8 +10,8 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
-  const openAiKey = Deno.env.get('OPENAI_API_KEY');
-  if (!openAiKey) return json({ error: 'The OPENAI_API_KEY secret is not configured for this project.' }, 503);
+  const geminiKey = Deno.env.get('GEMINI_API_KEY');
+  if (!geminiKey) return json({ error: 'The GEMINI_API_KEY secret is not configured in Supabase Edge Function Secrets.' }, 503);
   const auth = req.headers.get('Authorization');
   if (!auth) return json({ error: 'Sign in to run a prompt chain.' }, 401);
 
@@ -38,18 +38,22 @@ Deno.serve(async (req) => {
   try {
     for (const [index, step] of steps.entries()) {
       const instruction = `${step.system_prompt ? `${step.system_prompt}\n\n` : ''}${step.prompt_template}`.replaceAll('{{input}}', output || '(no previous text output)');
-      const content: Array<Record<string, unknown>> = [{ type: 'text', text: `Starting input / previous step output:\n${output || '(No text was provided.)'}` }];
-      if (index === 0 && body.image_data) content.push({ type: 'image_url', image_url: { url: body.image_data, detail: 'auto' } });
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST', headers: { Authorization: `Bearer ${openAiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: 'gpt-4o-mini', temperature: 0.8, messages: [
-          { role: 'system', content: `You are performing step ${index + 1} of a creative prompt chain called "${step.name}". Follow the step instructions carefully and return only the requested result.\n\nInstructions:\n${instruction}` },
-          { role: 'user', content },
-        ] }),
+      const parts: Array<Record<string, unknown>> = [{ text: `Starting input / previous step output:\n${output || '(No text was provided.)'}` }];
+      if (index === 0 && body.image_data) {
+        const [dataHeader, imageBytes] = body.image_data.split(',', 2);
+        const mimeType = dataHeader.slice(5).split(';')[0];
+        parts.push({ inline_data: { mime_type: mimeType, data: imageBytes } });
+      }
+      const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent', {
+        method: 'POST', headers: { 'x-goog-api-key': geminiKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          system_instruction: { parts: [{ text: `You are performing step ${index + 1} of a creative prompt chain called "${step.name}". Follow the step instructions carefully and return only the requested result.\n\nInstructions:\n${instruction}` }] },
+          contents: [{ role: 'user', parts }],
+        }),
       });
       const result = await response.json();
-      if (!response.ok) return json({ error: result?.error?.message || `AI request failed at step ${index + 1}.` }, 502);
-      output = result.choices?.[0]?.message?.content?.trim() || '';
+      if (!response.ok) return json({ error: result?.error?.message || `Gemini request failed at step ${index + 1}.` }, 502);
+      output = result.candidates?.[0]?.content?.parts?.map((part: { text?: string }) => part.text || '').join('').trim() || '';
       if (!output) return json({ error: `Step ${index + 1} returned an empty result.` }, 502);
     }
   } catch (error) {
