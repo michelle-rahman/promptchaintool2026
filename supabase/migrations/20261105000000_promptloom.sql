@@ -24,20 +24,24 @@ exception when duplicate_object then null; end $$;
 
 create table if not exists public.prompt_chains (
   id uuid primary key default gen_random_uuid(),
-  name text not null check (char_length(name) between 1 and 100),
+  name text not null unique check (char_length(name) between 1 and 100),
   description text check (description is null or char_length(description) <= 500),
-  created_by uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  is_active boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 create table if not exists public.prompt_chain_steps (
   id uuid primary key default gen_random_uuid(),
   chain_id uuid not null references public.prompt_chains(id) on delete cascade,
-  title text not null check (char_length(title) between 1 and 100),
-  prompt text not null check (char_length(prompt) between 1 and 12000),
-  position integer not null check (position > 0),
+  step_order integer not null default 1 check (step_order > 0),
+  name text not null check (char_length(name) between 1 and 100),
+  system_prompt text,
+  prompt_template text not null check (char_length(prompt_template) between 1 and 12000),
+  model_id uuid,
+  temperature numeric,
+  max_output_tokens integer,
   created_at timestamptz not null default now(),
-  unique(chain_id, position) deferrable initially deferred
+  unique(chain_id, step_order)
 );
 create table if not exists public.generated_media (
   id uuid primary key default gen_random_uuid(),
@@ -86,4 +90,5 @@ do $$ begin
 exception when duplicate_object then null; end $$;
 
 grant select on public.profiles to authenticated;
+grant usage on schema public to authenticated;
 grant select, insert, update, delete on public.prompt_chains, public.prompt_chain_steps, public.generated_media to authenticated;

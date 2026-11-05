@@ -30,20 +30,20 @@ Deno.serve(async (req) => {
   if (body.image_data && (!/^data:image\/(png|jpeg|webp);base64,/.test(body.image_data) || body.image_data.length > 14_000_000)) return json({ error: 'Use a PNG, JPG, or WEBP image up to 10 MB.' }, 413);
 
   const { data: steps, error: stepError } = await supabase.from('prompt_chain_steps')
-    .select('title,prompt,position').eq('chain_id', body.chain_id).order('position');
+    .select('name,system_prompt,prompt_template,step_order').eq('chain_id', body.chain_id).order('step_order');
   if (stepError) return json({ error: stepError.message }, 400);
   if (!steps?.length) return json({ error: 'This chain needs at least one step.' }, 400);
 
   let output = body.input_text?.trim() || '';
   try {
     for (const [index, step] of steps.entries()) {
-      const instruction = step.prompt.replaceAll('{{input}}', output || '(no previous text output)');
+      const instruction = `${step.system_prompt ? `${step.system_prompt}\n\n` : ''}${step.prompt_template}`.replaceAll('{{input}}', output || '(no previous text output)');
       const content: Array<Record<string, unknown>> = [{ type: 'text', text: `Starting input / previous step output:\n${output || '(No text was provided.)'}` }];
       if (index === 0 && body.image_data) content.push({ type: 'image_url', image_url: { url: body.image_data, detail: 'auto' } });
       const response = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST', headers: { Authorization: `Bearer ${openAiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ model: 'gpt-4o-mini', temperature: 0.8, messages: [
-          { role: 'system', content: `You are performing step ${index + 1} of a creative prompt chain called "${step.title}". Follow the step instructions carefully and return only the requested result.\n\nInstructions:\n${instruction}` },
+          { role: 'system', content: `You are performing step ${index + 1} of a creative prompt chain called "${step.name}". Follow the step instructions carefully and return only the requested result.\n\nInstructions:\n${instruction}` },
           { role: 'user', content },
         ] }),
       });

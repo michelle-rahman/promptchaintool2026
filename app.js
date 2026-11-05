@@ -9,7 +9,7 @@ const artClasses = ['green','lav','peach','blue','pink','gold'];
 const artSymbols = ['✳','✦','◌','⌁','✿','✧'];
 
 function toast(message) { const el = $('#toast'); el.textContent = message; el.classList.add('show'); clearTimeout(toast.timer); toast.timer = setTimeout(() => el.classList.remove('show'), 2600); }
-function friendlyError(error) { return error?.message?.replace(/^.*?: /,'') || 'Something went wrong. Please try again.'; }
+function friendlyError(error) { if(error?.code==='42501') return 'Supabase denied this write. Run the Promptloom Supabase migrations after the admin-panel migration.'; return error?.message?.replace(/^.*?: /,'') || 'Something went wrong. Please try again.'; }
 function applyTheme() { const dark = state.theme === 'dark' || (state.theme === 'system' && matchMedia('(prefers-color-scheme: dark)').matches); document.body.classList.toggle('theme-dark', dark); $('#theme-toggle').textContent = state.theme === 'light' ? '☼' : state.theme === 'dark' ? '☾' : '◐'; }
 function showLogin() { $('#app').classList.add('hidden'); $('#login').classList.remove('hidden'); }
 function showApp() { $('#login').classList.add('hidden'); $('#app').classList.remove('hidden'); }
@@ -48,8 +48,8 @@ async function openChain(chain, set=true) {
   if (!chain) return; if (set) state.selected = chain;
   $('#chain-list').classList.add('hidden'); $('#empty-state').classList.add('hidden'); $('#toolbar').classList.add('hidden'); $('#detail').classList.remove('hidden'); $('#media-page').classList.add('hidden');
   $('#detail-name').textContent=chain.name; $('#detail-description').textContent=chain.description || 'A fresh canvas for your next idea.';
-  const {data,error}=await sbClient.from('prompt_chain_steps').select('*').eq('chain_id',chain.id).order('position');
-  if(error){toast(friendlyError(error));return;} state.steps=data||[]; renderSteps(); await loadMedia(chain.id);
+  const {data,error}=await sbClient.from('prompt_chain_steps').select('*').eq('chain_id',chain.id).order('step_order');
+  if(error){toast(friendlyError(error));return;} state.steps=(data||[]).map(s=>({...s,title:s.title||s.name,prompt:s.prompt||s.prompt_template,position:s.step_order??s.position??1,step_order:s.step_order??s.position??1})); renderSteps(); await loadMedia(chain.id);
 }
 function renderSteps() {
   $('#steps-list').innerHTML=state.steps.length?state.steps.map((s,i)=>`<article class="step-card"><div class="step-number">${String(i+1).padStart(2,'0')}</div><div class="step-content"><h4>${escapeHtml(s.title)}</h4><p>${escapeHtml(s.prompt)}</p></div><div class="step-controls"><button data-up="${s.id}" title="Move up" ${i===0?'disabled':''}>↑</button><button data-down="${s.id}" title="Move down" ${i===state.steps.length-1?'disabled':''}>↓</button><button data-edit-step="${s.id}" title="Edit">✎</button><button data-delete-step="${s.id}" title="Delete">×</button></div></article>`).join(''):'<div class="empty-media">No steps yet. Add the first step to start the chain.</div>';
@@ -59,18 +59,22 @@ function renderSteps() {
 }
 async function moveStep(id,delta) {
   const index=state.steps.findIndex(s=>s.id===id), other=index+delta; if(other<0||other>=state.steps.length)return;
-  const next=[...state.steps]; [next[index],next[other]]=[next[other],next[index]];
-  const updates=next.map((s,i)=>({id:s.id,chain_id:s.chain_id,title:s.title,prompt:s.prompt,position:i+1}));
-  const {error}=await sbClient.from('prompt_chain_steps').upsert(updates); if(error){toast(friendlyError(error));return;} state.steps=next.map((s,i)=>({...s,position:i+1})); renderSteps(); toast('Step order updated');
+  const first=state.steps[index], second=state.steps[other], temporary=Math.max(...state.steps.map(s=>Math.max(s.step_order,s.position)))+1;
+  let result=await sbClient.from('prompt_chain_steps').update({step_order:temporary,position:temporary}).eq('id',first.id);
+  if(result.error){toast(friendlyError(result.error));return;}
+  result=await sbClient.from('prompt_chain_steps').update({step_order:first.step_order,position:first.position}).eq('id',second.id);
+  if(result.error){await sbClient.from('prompt_chain_steps').update({step_order:first.step_order,position:first.position}).eq('id',first.id);toast(friendlyError(result.error));await openChain(state.selected,false);return;}
+  result=await sbClient.from('prompt_chain_steps').update({step_order:second.step_order,position:second.position}).eq('id',first.id);
+  if(result.error){await sbClient.from('prompt_chain_steps').update({step_order:second.step_order,position:second.position}).eq('id',second.id);await sbClient.from('prompt_chain_steps').update({step_order:first.step_order,position:first.position}).eq('id',first.id);toast(friendlyError(result.error));await openChain(state.selected,false);return;}
+  const next=[...state.steps];next[index]={...first,step_order:second.step_order,position:second.step_order};next[other]={...second,step_order:first.step_order,position:first.step_order};[next[index],next[other]]=[next[other],next[index]];state.steps=next;renderSteps();toast('Step order updated');
 }
 function openChainDialog(chain=null) { const form=$('#chain-form'); form.reset(); form.dataset.id=chain?.id||''; $('#chain-modal-title').textContent=chain?'Edit chain':'Create a chain'; form.elements.name.value=chain?.name||''; form.elements.description.value=chain?.description||''; $('#chain-dialog').showModal(); }
 function editChain(chain) { openChainDialog(chain); }
 async function saveChain(e) { e.preventDefault(); const f=e.currentTarget, id=f.dataset.id; const payload={name:f.elements.name.value.trim(),description:f.elements.description.value.trim()||null}; const result=id?await sbClient.from('prompt_chains').update(payload).eq('id',id).select().single():await sbClient.from('prompt_chains').insert(payload).select().single(); if(result.error){toast(friendlyError(result.error));return;} $('#chain-dialog').close(); toast(id?'Chain updated':'Chain created'); await loadChains(); if(!id) openChain(result.data); }
 function openStepDialog(step=null) { const f=$('#step-form'); f.reset(); f.dataset.id=step?.id||''; $('#step-modal-title').textContent=step?'Edit step':'Add a step'; f.elements.title.value=step?.title||''; f.elements.prompt.value=step?.prompt||''; $('#step-dialog').showModal(); }
 function editStep(step){openStepDialog(step);}
-async function saveStep(e) { e.preventDefault(); const f=e.currentTarget,id=f.dataset.id; const payload={chain_id:state.selected.id,title:f.elements.title.value.trim(),prompt:f.elements.prompt.value.trim(),position:id?state.steps.find(s=>s.id===id).position:state.steps.length+1}; const result=id?await sbClient.from('prompt_chain_steps').update(payload).eq('id',id):await sbClient.from('prompt_chain_steps').insert(payload); if(result.error){toast(friendlyError(result.error));return;} $('#step-dialog').close(); toast(id?'Step updated':'Step added'); await loadChains(); }
-async function deleteStep(id) { const step=state.steps.find(s=>s.id===id); if(!confirm(`Delete “${step.title}”?`))return; const {error}=await sbClient.from('prompt_chain_steps').delete().eq('id',id); if(error){toast(friendlyError(error));return;} await normalizePositions(); toast('Step deleted'); await loadChains(); }
-async function normalizePositions() { const {data}=await sbClient.from('prompt_chain_steps').select('*').eq('chain_id',state.selected.id).order('position'); if(!data)return; const rows=data.map((s,i)=>({...s,position:i+1})); await sbClient.from('prompt_chain_steps').upsert(rows); }
+async function saveStep(e) { e.preventDefault(); const f=e.currentTarget,id=f.dataset.id, existing=state.steps.find(s=>s.id===id), order=id?existing.step_order:Math.max(0,...state.steps.map(s=>Math.max(s.step_order,s.position)))+1,title=f.elements.title.value.trim(),prompt=f.elements.prompt.value.trim(); const payload={chain_id:state.selected.id,name:title,title,prompt_template:prompt,prompt,step_order:order,position:order}; const result=id?await sbClient.from('prompt_chain_steps').update(payload).eq('id',id):await sbClient.from('prompt_chain_steps').insert(payload); if(result.error){toast(friendlyError(result.error));return;} $('#step-dialog').close(); toast(id?'Step updated':'Step added'); await loadChains(); }
+async function deleteStep(id) { const step=state.steps.find(s=>s.id===id); if(!confirm(`Delete “${step.title}”?`))return; const {error}=await sbClient.from('prompt_chain_steps').delete().eq('id',id); if(error){toast(friendlyError(error));return;} toast('Step deleted'); await loadChains(); }
 async function deleteChain(chain=state.selected) { if(!chain||!confirm(`Delete “${chain.name}” and all its steps?`))return; const {error}=await sbClient.from('prompt_chains').delete().eq('id',chain.id); if(error){toast(friendlyError(error));return;} state.selected=null; toast('Chain deleted'); await loadChains(); }
 function backToList(){state.selected=null;$('#detail').classList.add('hidden');$('#media-page').classList.add('hidden');$('#toolbar').classList.remove('hidden');renderChains();}
 async function loadMedia(chainId) { const {data,error}=await sbClient.from('generated_media').select('*').eq('chain_id',chainId).order('created_at',{ascending:false}).limit(20); if(error){$('#media-list').innerHTML='<div class="empty-media">Generated media is unavailable until the database setup is complete.</div>';return;} $('#media-list').innerHTML=data?.length?data.map(mediaRow).join(''):'<div class="empty-media">Nothing generated yet. Run this chain to see what it creates.</div>'; }
