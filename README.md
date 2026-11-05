@@ -6,11 +6,12 @@ A small, Vercel-ready prompt-chain studio backed by Supabase. It supports Google
 
 1. In the Supabase SQL editor, run [`supabase/migrations/20261105000000_promptloom.sql`](supabase/migrations/20261105000000_promptloom.sql), then [`supabase/migrations/20261105000001_shared_prompt_chain_access.sql`](supabase/migrations/20261105000001_shared_prompt_chain_access.sql). Run these after the admin-panel schema: it deliberately made prompt chains read-only, while this tool needs superadmin-only create/update/delete access. The migrations expect `public.profiles.id` to match `auth.users.id` and `profiles.is_superadmin` to be true for the account using the tool. The compatibility migration also supports the existing Week 7 step columns.
 2. In **Authentication → Providers → Google**, enable Google using the same OAuth client setup as your other apps. In **Authentication → URL Configuration**, add `http://localhost:8000/` and `https://promptchaintool2026.vercel.app/` to the allowed redirect URLs. The OAuth callback URI for Google Cloud is `https://exzfdcrmdgcyaozmtmvg.supabase.co/auth/v1/callback`.
-3. Set the model secret for the edge function, then deploy it:
+3. In the Supabase Dashboard, open **Edge Functions → Secrets** and add `OPENAI_API_KEY` there (Vercel environment variables are not passed to Supabase Functions). Then, from the repository folder, authenticate and deploy:
 
    ```sh
-   supabase secrets set OPENAI_API_KEY=your_key
-   supabase functions deploy run-prompt-chain
+   npx supabase login
+   npx supabase link --project-ref exzfdcrmdgcyaozmtmvg
+   npx supabase functions deploy run-prompt-chain
    ```
 
    The function uses `gpt-4o-mini`; it sends each step to the OpenAI Chat Completions API in order and passes the previous result forward. The first step can also receive a PNG, JPG, or WEBP image.

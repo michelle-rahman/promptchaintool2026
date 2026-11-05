@@ -10,6 +10,15 @@ const artSymbols = ['✳','✦','◌','⌁','✿','✧'];
 
 function toast(message) { const el = $('#toast'); el.textContent = message; el.classList.add('show'); clearTimeout(toast.timer); toast.timer = setTimeout(() => el.classList.remove('show'), 2600); }
 function friendlyError(error) { if(error?.code==='42501') return 'Supabase denied this write. Run the Promptloom Supabase migrations after the admin-panel migration.'; return error?.message?.replace(/^.*?: /,'') || 'Something went wrong. Please try again.'; }
+async function functionErrorMessage(error) {
+  if (error?.name === 'FunctionsFetchError') return 'Could not reach run-prompt-chain. Deploy the Supabase Edge Function and check its CORS settings.';
+  if (error?.context && typeof error.context.clone === 'function') {
+    const response=error.context, body=await response.clone().json().catch(()=>null);
+    if(body?.error) return body.error;
+    if(response.status) return `run-prompt-chain returned HTTP ${response.status}. Check the Supabase Edge Function logs.`;
+  }
+  return friendlyError(error);
+}
 function applyTheme() { const dark = state.theme === 'dark' || (state.theme === 'system' && matchMedia('(prefers-color-scheme: dark)').matches); document.body.classList.toggle('theme-dark', dark); $('#theme-toggle').textContent = state.theme === 'light' ? '☼' : state.theme === 'dark' ? '☾' : '◐'; }
 function showLogin() { $('#app').classList.add('hidden'); $('#login').classList.remove('hidden'); }
 function showApp() { $('#login').classList.add('hidden'); $('#app').classList.remove('hidden'); }
@@ -83,7 +92,7 @@ async function runChain() {
   if(!state.steps.length){toast('Add at least one step before running this chain.');return;} const input=$('#run-input').value.trim(); if(!input&&!state.image){toast('Add some text or an image as your starting point.');return;}
   const btn=$('#run-chain');btn.disabled=true;btn.innerHTML='<span class="spinner">◌</span> Running your chain…';
   try { let image_data=null; if(state.image) image_data=await fileToDataUrl(state.image); const {data,error}=await sbClient.functions.invoke('run-prompt-chain',{body:{chain_id:state.selected.id,input_text:input,image_data}}); if(error)throw error; toast('Your chain is complete'); await loadMedia(state.selected.id); await loadChains(); }
-  catch(e){toast(friendlyError(e));} finally {btn.disabled=false;btn.innerHTML='Run chain <span>↗</span>';}
+  catch(e){toast(await functionErrorMessage(e));} finally {btn.disabled=false;btn.innerHTML='Run chain <span>↗</span>';}
 }
 function fileToDataUrl(file){return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=reject;reader.readAsDataURL(file);});}
 async function showAllMedia(){state.selected=null;$('#detail').classList.add('hidden');$('#chain-list').classList.add('hidden');$('#empty-state').classList.add('hidden');$('#toolbar').classList.add('hidden');$('#media-page').classList.remove('hidden');const {data,error}=await sbClient.from('generated_media').select('*, prompt_chains(name)').order('created_at',{ascending:false}).limit(100);$('#all-media-list').innerHTML=error?'<div class="empty-media">Could not load media.</div>':data?.length?data.map(m=>mediaRow(m,m.prompt_chains?.name||'Prompt chain')).join(''):'<div class="empty-media">Your generated outputs will show up here.</div>';}
