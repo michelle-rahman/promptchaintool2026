@@ -55,6 +55,16 @@
   <dialog id="chain-dialog" class="modal"><form id="chain-form" method="dialog"><div class="modal-head"><div><p class="eyebrow">PROMPT CHAIN</p><h2 id="chain-modal-title">Create a chain</h2></div><button type="button" class="icon-button close-modal" aria-label="Close">×</button></div><label class="field-label">CHAIN NAME<input name="name" required maxlength="100" placeholder="e.g. The funny caption machine" /></label><label class="field-label">DESCRIPTION <span class="optional">OPTIONAL</span><textarea name="description" rows="3" maxlength="500" placeholder="What does this chain create?"></textarea></label><div class="modal-actions"><button type="button" class="button secondary close-modal">Cancel</button><button class="button primary" type="submit">Save chain <span>↗</span></button></div></form></dialog>
   <dialog id="step-dialog" class="modal"><form id="step-form" method="dialog"><div class="modal-head"><div><p class="eyebrow">CHAIN STEP</p><h2 id="step-modal-title">Add a step</h2></div><button type="button" class="icon-button close-modal" aria-label="Close">×</button></div><label class="field-label">STEP NAME<input name="title" required maxlength="100" placeholder="e.g. Make it funny" /></label><label class="field-label">INSTRUCTIONS <span class="optional">USE {{input}} FOR THE PREVIOUS STEP</span><textarea name="prompt" rows="6" required placeholder="Describe exactly what this step should do. Use {{input}} where the previous result should go."></textarea></label><div class="modal-actions"><button type="button" class="button secondary close-modal">Cancel</button><button class="button primary" type="submit">Save step <span>↗</span></button></div></form></dialog>
   <div id="toast" class="toast"></div>
-  <script src="app.js?v=google-oauth-8190118"></script>
+  <script>
+    window.addEventListener('error', event => {
+      const note = document.getElementById('login-note');
+      if (note) note.textContent = `Sign-in page error: ${event.message || 'A script failed to load.'}`;
+    });
+    window.addEventListener('unhandledrejection', event => {
+      const note = document.getElementById('login-note');
+      if (note) note.textContent = `Sign-in page error: ${event.reason?.message || 'An unexpected error occurred.'}`;
+    });
+  </script>
+  <script src="app.js?v=google-oauth-fd9a6dc" onerror="document.getElementById('login-note').textContent='Could not load the app script. Refresh to try again.'"></script>
 </body>
 </html>
