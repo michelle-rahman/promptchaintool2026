@@ -7,6 +7,47 @@ const cors = {
 };
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
 
+const GEMINI_MODELS = ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite'];
+
+async function generateWithFallback(apiKey: string, systemInstruction: string, parts: Array<Record<string, unknown>>) {
+  let lastMessage = 'Gemini could not generate a response.';
+
+  for (const model of GEMINI_MODELS) {
+    let response: Response;
+    try {
+      response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+        method: 'POST',
+        headers: { 'x-goog-api-key': apiKey, 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(15_000),
+        body: JSON.stringify({
+          system_instruction: { parts: [{ text: systemInstruction }] },
+          contents: [{ role: 'user', parts }],
+        }),
+      });
+    } catch (error) {
+      lastMessage = error instanceof Error ? error.message : 'Could not reach the Gemini API.';
+      continue;
+    }
+
+    const result = await response.json().catch(() => ({}));
+    if (response.ok) return { result, error: null as string | null, status: 200 };
+
+    lastMessage = result?.error?.message || `Gemini returned HTTP ${response.status}.`;
+    if (response.status !== 503 && response.status !== 429 && response.status < 500) {
+      return { result: null, error: lastMessage, status: response.status };
+    }
+    if (response.status === 429) {
+      return { result: null, error: `Gemini rate/quota limit reached. Check this API key's project limits in AI Studio. ${lastMessage}`, status: 429 };
+    }
+  }
+
+  return {
+    result: null,
+    error: `Gemini is currently at capacity across the available Flash models. Please try again later. ${lastMessage}`,
+    status: 503,
+  };
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
@@ -44,15 +85,13 @@ Deno.serve(async (req) => {
         const mimeType = dataHeader.slice(5).split(';')[0];
         parts.push({ inline_data: { mime_type: mimeType, data: imageBytes } });
       }
-      const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent', {
-        method: 'POST', headers: { 'x-goog-api-key': geminiKey, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          system_instruction: { parts: [{ text: `You are performing step ${index + 1} of a creative prompt chain called "${step.name}". Follow the step instructions carefully and return only the requested result.\n\nInstructions:\n${instruction}` }] },
-          contents: [{ role: 'user', parts }],
-        }),
-      });
-      const result = await response.json();
-      if (!response.ok) return json({ error: result?.error?.message || `Gemini request failed at step ${index + 1}.` }, 502);
+      const generated = await generateWithFallback(
+        geminiKey,
+        `You are performing step ${index + 1} of a creative prompt chain called "${step.name}". Follow the step instructions carefully and return only the requested result.\n\nInstructions:\n${instruction}`,
+        parts,
+      );
+      if (generated.error) return json({ error: `Step ${index + 1}: ${generated.error}` }, generated.status === 429 ? 429 : 502);
+      const result = generated.result!;
       output = result.candidates?.[0]?.content?.parts?.map((part: { text?: string }) => part.text || '').join('').trim() || '';
       if (!output) return json({ error: `Step ${index + 1} returned an empty result.` }, 502);
     }
@@ -60,8 +99,22 @@ Deno.serve(async (req) => {
     return json({ error: error instanceof Error ? error.message : 'Could not run the prompt chain.' }, 502);
   }
 
+  let inputImagePath: string | null = null;
+  if (body.image_data) {
+    const [dataHeader, encoded] = body.image_data.split(',', 2);
+    const mimeType = dataHeader.slice(5).split(';')[0];
+    const extension = mimeType === 'image/jpeg' ? 'jpg' : mimeType.slice('image/'.length);
+    const bytes = Uint8Array.from(atob(encoded), character => character.charCodeAt(0));
+    inputImagePath = `${user.id}/${crypto.randomUUID()}.${extension}`;
+    const { error: uploadError } = await supabase.storage.from('promptloom-inputs').upload(inputImagePath, bytes, {
+      contentType: mimeType,
+      upsert: false,
+    });
+    if (uploadError) return json({ error: `The captions were generated, but the attached image could not be saved: ${uploadError.message}` }, 400);
+  }
+
   const { data: saved, error: saveError } = await supabase.from('generated_media').insert({
-    chain_id: body.chain_id, input_text: body.input_text?.trim() || null, output_text: output,
+    chain_id: body.chain_id, input_text: body.input_text?.trim() || null, input_image_path: inputImagePath, output_text: output,
   }).select().single();
   if (saveError) return json({ error: `The result was generated but could not be saved: ${saveError.message}` }, 400);
   return json({ media: saved });
