@@ -1,6 +1,6 @@
 # Promptloom
 
-A small, Vercel-ready prompt-chain studio backed by Supabase. It supports Google OAuth with PKCE and a `profiles.is_superadmin` gate, prompt-chain and step CRUD, step reordering, sequential text generation with optional image input, saved outputs, search, and light/dark/system themes.
+A small, Vercel-ready prompt-chain studio backed by Supabase. It supports Google OAuth with PKCE and a `profiles.is_superadmin` gate, prompt-chain and step CRUD, step reordering, sequential text generation with optional image input, saved outputs, search, and light/dark/system themes. Each step can select an active Gemini model from the shared `llm_models` / `llm_providers` catalog. Runs write one `generation_requests` row and one `llm_responses` row per step so the admin panel can inspect model, status, latency, and token counts.
 
 ## Supabase setup
 
@@ -14,7 +14,7 @@ A small, Vercel-ready prompt-chain studio backed by Supabase. It supports Google
    npx supabase functions deploy run-prompt-chain
    ```
 
-   The function uses Gemini 3.8 Flash through the `generateContent` API. It sends each step in order and passes the previous result forward. The first step can also receive a PNG, JPG, or WEBP image.
+   The function uses each step's catalog `model_key` with the `generateContent` API, falling back among active Gemini catalog models on capacity errors. It sends each step in order and passes the previous result forward. The first step can also receive a PNG, JPG, or WEBP image. The runner verifies the signed-in superadmin before using Supabase's server-side key to write run and model-response records; that key stays inside the Edge Function.
 
 The browser is a static site and connects to project `exzfdcrmdgcyaozmtmvg` with its publishable key in `app.js`; Vercel `NEXT_PUBLIC_*` variables are not injected into static files. The key is intended for client applications; database access is restricted by row-level security. The edge function checks the signed-in user's profile again before generating output.
 

@@ -4,9 +4,10 @@ const sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
   auth: { flowType: 'pkce', detectSessionInUrl: true },
 });
 const $ = (s) => document.querySelector(s);
-const state = { user: null, chains: [], steps: [], selected: null, editStepId: null, filter: 'all', image: null, theme: localStorage.getItem('promptloom-theme') || 'system' };
+const state = { user: null, chains: [], steps: [], models: [], providers: [], selected: null, editStepId: null, filter: 'all', image: null, theme: localStorage.getItem('promptloom-theme') || 'system' };
 const artClasses = ['green','lav','peach','blue','pink','gold'];
 const artSymbols = ['✳','✦','◌','⌁','✿','✧'];
+const GEMINI_MODEL_ORDER = ['gemini-3.8-flash','gemini-3.7-flash','gemini-3.6-flash','gemini-3.5-flash-lite'];
 
 function toast(message) { const el = $('#toast'); el.textContent = message; el.classList.add('show'); clearTimeout(toast.timer); toast.timer = setTimeout(() => el.classList.remove('show'), 2600); }
 function friendlyError(error) { if(error?.code==='42501') return 'Supabase denied this write. Run the Promptloom Supabase migrations after the admin-panel migration.'; return error?.message?.replace(/^.*?: /,'') || 'Something went wrong. Please try again.'; }
@@ -31,8 +32,21 @@ async function initialize() {
 async function acceptSession(session) {
   const { data: profile, error } = await sbClient.from('profiles').select('is_superadmin').eq('id', session.user.id).maybeSingle();
   if (error || !profile?.is_superadmin) { await sbClient.auth.signOut(); showLogin(); $('#login-note').textContent = error ? `Could not verify superadmin profile: ${friendlyError(error)}` : 'This account does not have superadmin access.'; return; }
-  state.user = session.user; $('#user-email').textContent = session.user.email || 'Superadmin'; $('#avatar').textContent = $('#top-avatar').textContent = (session.user.email || 'S').slice(0,1).toUpperCase(); showApp(); await loadChains();
+  state.user = session.user; $('#user-email').textContent = session.user.email || 'Superadmin'; $('#avatar').textContent = $('#top-avatar').textContent = (session.user.email || 'S').slice(0,1).toUpperCase(); showApp(); await loadModelCatalog(); await loadChains();
 }
+async function loadModelCatalog() {
+  const [modelResult, providerResult] = await Promise.all([
+    sbClient.from('llm_models').select('id,name,model_key,provider_id,is_active').eq('is_active',true).order('name'),
+    sbClient.from('llm_providers').select('id,name,provider_key,is_active').eq('is_active',true).order('name'),
+  ]);
+  if(modelResult.error||providerResult.error){toast(`Could not load the LLM catalog: ${friendlyError(modelResult.error||providerResult.error)}`);return;}
+  state.providers=providerResult.data||[];
+  const providers=new Map(state.providers.map(provider=>[provider.id,provider]));
+  state.models=(modelResult.data||[]).map(model=>({...model,provider:providers.get(model.provider_id)}));
+}
+function isGeminiModel(model) { const providerKey=(model?.provider?.provider_key||'').toLowerCase(); return /^gemini-[a-z0-9.-]+$/i.test(model?.model_key||'')&&(providerKey.includes('gemini')||providerKey.includes('google')); }
+function defaultGeminiModel() { const models=state.models.filter(isGeminiModel); return models.find(model=>GEMINI_MODEL_ORDER.includes(model.model_key))||models[0]||null; }
+function modelTitle(model) { return `${model.name} · ${model.provider?.name||'Provider'} (${model.model_key})`; }
 async function loadChains() {
   const { data, error } = await sbClient.from('prompt_chains').select('*, prompt_chain_steps(count)').order('updated_at', {ascending:false});
   if (error) { toast(friendlyError(error)); state.chains = []; } else state.chains = (data || []).map(c=>({...c,step_count:c.prompt_chain_steps?.[0]?.count||0}));
@@ -58,10 +72,10 @@ async function openChain(chain, set=true) {
   $('#chain-list').classList.add('hidden'); $('#empty-state').classList.add('hidden'); $('#toolbar').classList.add('hidden'); $('#detail').classList.remove('hidden'); $('#media-page').classList.add('hidden');
   $('#detail-name').textContent=chain.name; $('#detail-description').textContent=chain.description || 'A fresh canvas for your next idea.';
   const {data,error}=await sbClient.from('prompt_chain_steps').select('*').eq('chain_id',chain.id).order('step_order');
-  if(error){toast(friendlyError(error));return;} state.steps=(data||[]).map(s=>({...s,title:s.title||s.name,prompt:s.prompt||s.prompt_template,position:s.step_order??s.position??1,step_order:s.step_order??s.position??1})); renderSteps(); await loadMedia(chain.id);
+  if(error){toast(friendlyError(error));return;} state.steps=(data||[]).map(s=>{const model=state.models.find(m=>m.id===s.model_id);return {...s,title:s.title||s.name,prompt:s.prompt||s.prompt_template,position:s.step_order??s.position??1,step_order:s.step_order??s.position??1,model_name:model?.name||null,provider_name:model?.provider?.name||null};}); renderSteps(); await loadMedia(chain.id);
 }
 function renderSteps() {
-  $('#steps-list').innerHTML=state.steps.length?state.steps.map((s,i)=>`<article class="step-card"><div class="step-number">${String(i+1).padStart(2,'0')}</div><div class="step-content"><h4>${escapeHtml(s.title)}</h4><p>${escapeHtml(s.prompt)}</p></div><div class="step-controls"><button data-up="${s.id}" title="Move up" ${i===0?'disabled':''}>↑</button><button data-down="${s.id}" title="Move down" ${i===state.steps.length-1?'disabled':''}>↓</button><button data-edit-step="${s.id}" title="Edit">✎</button><button data-delete-step="${s.id}" title="Delete">×</button></div></article>`).join(''):'<div class="empty-media">No steps yet. Add the first step to start the chain.</div>';
+  $('#steps-list').innerHTML=state.steps.length?state.steps.map((s,i)=>`<article class="step-card"><div class="step-number">${String(i+1).padStart(2,'0')}</div><div class="step-content"><h4>${escapeHtml(s.title)}</h4><p class="step-model">${escapeHtml(s.model_name?`${s.model_name}${s.provider_name?` · ${s.provider_name}`:''}`:'No model selected')}</p><p>${escapeHtml(s.prompt)}</p></div><div class="step-controls"><button data-up="${s.id}" title="Move up" ${i===0?'disabled':''}>↑</button><button data-down="${s.id}" title="Move down" ${i===state.steps.length-1?'disabled':''}>↓</button><button data-edit-step="${s.id}" title="Edit">✎</button><button data-delete-step="${s.id}" title="Delete">×</button></div></article>`).join(''):'<div class="empty-media">No steps yet. Add the first step to start the chain.</div>';
   document.querySelectorAll('[data-up]').forEach(b=>b.onclick=()=>moveStep(b.dataset.up,-1)); document.querySelectorAll('[data-down]').forEach(b=>b.onclick=()=>moveStep(b.dataset.down,1));
   document.querySelectorAll('[data-edit-step]').forEach(b=>b.onclick=()=>editStep(state.steps.find(s=>s.id===b.dataset.editStep)));
   document.querySelectorAll('[data-delete-step]').forEach(b=>b.onclick=()=>deleteStep(b.dataset.deleteStep));
@@ -80,9 +94,9 @@ async function moveStep(id,delta) {
 function openChainDialog(chain=null) { const form=$('#chain-form'); form.reset(); form.dataset.id=chain?.id||''; $('#chain-modal-title').textContent=chain?'Edit chain':'Create a chain'; form.elements.name.value=chain?.name||''; form.elements.description.value=chain?.description||''; $('#chain-dialog').showModal(); }
 function editChain(chain) { openChainDialog(chain); }
 async function saveChain(e) { e.preventDefault(); const f=e.currentTarget, id=f.dataset.id; const payload={name:f.elements.name.value.trim(),description:f.elements.description.value.trim()||null}; const result=id?await sbClient.from('prompt_chains').update(payload).eq('id',id).select().single():await sbClient.from('prompt_chains').insert(payload).select().single(); if(result.error){toast(friendlyError(result.error));return;} $('#chain-dialog').close(); toast(id?'Chain updated':'Chain created'); await loadChains(); if(!id) openChain(result.data); }
-function openStepDialog(step=null) { const f=$('#step-form'); f.reset(); f.dataset.id=step?.id||''; $('#step-modal-title').textContent=step?'Edit step':'Add a step'; f.elements.title.value=step?.title||''; f.elements.prompt.value=step?.prompt||''; $('#step-dialog').showModal(); }
+function openStepDialog(step=null) { const f=$('#step-form'); f.reset(); f.dataset.id=step?.id||''; $('#step-modal-title').textContent=step?'Edit step':'Add a step'; f.elements.title.value=step?.title||''; f.elements.prompt.value=step?.prompt||''; const select=f.elements.model_id, supported=state.models.filter(isGeminiModel), fallback=defaultGeminiModel(); select.innerHTML=supported.length?supported.map(model=>`<option value="${escapeHtml(model.id)}">${escapeHtml(modelTitle(model))}</option>`).join(''):'<option value="">No active Gemini models in the shared catalog</option>'; select.disabled=!supported.length; select.required=!!supported.length; select.value=supported.some(model=>model.id===step?.model_id)?step.model_id:(fallback?.id||''); $('#step-dialog').showModal(); }
 function editStep(step){openStepDialog(step);}
-async function saveStep(e) { e.preventDefault(); const f=e.currentTarget,id=f.dataset.id, existing=state.steps.find(s=>s.id===id), order=id?existing.step_order:Math.max(0,...state.steps.map(s=>Math.max(s.step_order,s.position)))+1,title=f.elements.title.value.trim(),prompt=f.elements.prompt.value.trim(); const payload={chain_id:state.selected.id,name:title,title,prompt_template:prompt,prompt,step_order:order,position:order}; const result=id?await sbClient.from('prompt_chain_steps').update(payload).eq('id',id):await sbClient.from('prompt_chain_steps').insert(payload); if(result.error){toast(friendlyError(result.error));return;} $('#step-dialog').close(); toast(id?'Step updated':'Step added'); await loadChains(); }
+async function saveStep(e) { e.preventDefault(); const f=e.currentTarget,id=f.dataset.id, existing=state.steps.find(s=>s.id===id), order=id?existing.step_order:Math.max(0,...state.steps.map(s=>Math.max(s.step_order,s.position)))+1,title=f.elements.title.value.trim(),prompt=f.elements.prompt.value.trim(); const payload={chain_id:state.selected.id,name:title,title,prompt_template:prompt,prompt,step_order:order,position:order,model_id:f.elements.model_id.value||null}; const result=id?await sbClient.from('prompt_chain_steps').update(payload).eq('id',id):await sbClient.from('prompt_chain_steps').insert(payload); if(result.error){toast(friendlyError(result.error));return;} $('#step-dialog').close(); toast(id?'Step updated':'Step added'); await loadChains(); }
 async function deleteStep(id) { const step=state.steps.find(s=>s.id===id); if(!confirm(`Delete “${step.title}”?`))return; const {error}=await sbClient.from('prompt_chain_steps').delete().eq('id',id); if(error){toast(friendlyError(error));return;} toast('Step deleted'); await loadChains(); }
 async function deleteChain(chain=state.selected) { if(!chain||!confirm(`Delete “${chain.name}” and all its steps?`))return; const {error}=await sbClient.from('prompt_chains').delete().eq('id',chain.id); if(error){toast(friendlyError(error));return;} state.selected=null; toast('Chain deleted'); await loadChains(); }
 function backToList(){state.selected=null;$('#detail').classList.add('hidden');$('#media-page').classList.add('hidden');$('#toolbar').classList.remove('hidden');renderChains();}
